@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BYU Free Throw Challenge</title>
+    <!-- Load Tailwind CSS for styling and responsiveness -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the player and controls, prioritizing mobile view */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Light gray background */
+        }
+        #gameCanvas {
+            border: 3px solid #00225E; /* BYU Blue border */
+            background-color: #e0e0e0; /* Court background */
+            display: block;
+            touch-action: none; /* Prevents default touch scrolling/zooming */
+        }
+        /* Custom styles for the dynamic bars */
+        #powerBarContainer, #angleBarContainer {
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+        }
+        /* Animation for the made shot message */
+        .fade-in-out {
+            animation: fadeAnimation 1.5s ease-out;
+        }
+        @keyframes fadeAnimation {
+            0% { opacity: 0; transform: translateY(-20px); }
+            30% { opacity: 1; transform: translateY(0); }
+            70% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-start p-4">
+
+    <!-- NAVIGATION BUTTON: Back to Scratch -->
+    <a href="index.html" class="mb-4 py-2 px-4 bg-gray-600 text-white text-sm font-semibold rounded-full shadow-md hover:bg-gray-700 transition duration-150">
+        ← Back to Avatar Page
+    </a>
+    
+    <!-- Game Header/Scoreboard -->
+    <div id="scoreboard" class="w-full max-w-lg mb-4 p-4 bg-white shadow-xl rounded-xl flex justify-around items-center text-center border-b-4 border-[#00225E]">
+        <div>
+            <div class="xs font-bold uppercase text-gray-500">Total Points</div>
+            <div id="scoreDisplay" class="text-4xl font-extrabold text-[#A50024] select-none">0</div>
+        </div>
+        <div>
+            <div class="text-xs font-bold uppercase text-gray-500">Time Left</div>
+            <div id="timerDisplay" class="text-4xl font-extrabold text-[#00225E] select-none">60s</div>
+        </div>
+        <div id="gameStatus" class="absolute top-0 right-0 left-0 mt-20 text-center pointer-events-none">
+            <!-- Dynamic messages like "SWISH!" will appear here -->
+        </div>
+    </div>
+
+    <!-- Game Canvas -->
+    <canvas id="gameCanvas" class="w-full max-w-lg aspect-[4/3] rounded-xl shadow-2xl"></canvas>
+
+    <!-- Controls Container -->
+    <div id="controls" class="w-full max-w-lg mt-4 p-4 bg-white shadow-xl rounded-xl">
+        
+        <div id="selectionStatus" class="mb-4 text-center font-bold text-gray-700 h-6">
+            Click "Start Shot" to begin.
+        </div>
+        
+        <div class="flex justify-around items-start">
+            <!-- Trajectory Input (Horizontal Bar - MOVED TO LEFT/FIRST POSITION) -->
+            <div id="angleControls" class="flex flex-col items-center mb-4">
+                <label class="block text-sm font-medium text-gray-700">Trajectory: <span id="currentAngleDisplay" class="font-bold text-[#00225E]">--</span></label>
+                <div id="angleBarContainer" class="h-6 w-48 bg-gray-200 rounded-lg overflow-hidden relative border-2 border-[#A50024] my-2">
+                    <div id="angleBar" class="h-full bg-[#00225E] absolute left-0" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <!-- Power Input (Horizontal Bar - MOVED TO RIGHT/SECOND POSITION) -->
+            <div id="powerControls" class="flex flex-col items-center mb-4 opacity-50 pointer-events-none">
+                <label class="block text-sm font-medium text-gray-700">Power: <span id="currentPowerDisplay" class="font-bold text-[#A50024]">--</span></label>
+                <!-- Dimensions updated: h-6 w-48 -->
+                <div id="powerBarContainer" class="h-6 w-48 bg-gray-200 rounded-lg overflow-hidden relative border-2 border-[#00225E] my-2">
+                    <!-- Sizing updated: h-full absolute left-0 -->
+                    <div id="powerBar" class="h-full bg-[#A50024] absolute left-0" style="width: 0%;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Button -->
+        <button id="shootButton" class="w-full py-3 mt-2 text-xl font-bold text-white bg-[#00225E] rounded-lg shadow-md hover:bg-opacity-90 transition duration-150 active:scale-[0.98]">
+            Start Shot
+        </button>
+        <button id="resetButton" class="hidden w-full py-3 mt-2 text-xl font-bold text-white bg-[#A50024] rounded-lg shadow-md hover:bg-opacity-90 transition duration-150 active:scale-[0.98]">
+            Restart Game
+        </button>
+    </div>
+
+    <!-- ADDED type="module" to fix the import error -->
+    <script type="module">
+        // --- Firebase/Auth Setup (Mandatory for persistence, though this is single-player) ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        setLogLevel('Debug');
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth, userId = null;
+        let isAuthReady = false;
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+        }
+
+        // 1. Authentication and Initialization
+        async function initAuth() {
+            if (!auth) {
+                console.error("Firebase Auth not initialized.");
+                isAuthReady = true; 
+                return;
+            }
+
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Firebase Auth Error:", error);
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    userId = user.uid;
+                    loadHighScore();
+                } else {
+                    userId = crypto.randomUUID(); 
+                }
+                isAuthReady = true;
+            });
+        }
+        
+        // 2. High Score Persistence 
+        const SCORE_COLLECTION = "freeThrowScores";
+
+        async function saveHighScore(score) {
+            if (!db || !userId) return;
+            const docPath = `/artifacts/${appId}/users/${userId}/${SCORE_COLLECTION}/highScore`;
+            try {
+                const scoreRef = doc(db, docPath);
+                const docSnap = await getDoc(scoreRef);
+                
+                let currentHighScore = 0;
+                if (docSnap.exists()) {
+                    currentHighScore = docSnap.data().score || 0;
+                }
+
+                if (score > currentHighScore) {
+                    await setDoc(scoreRef, { score, timestamp: new Date().toISOString() });
+                    displayMessage(`NEW High Score: ${score}`, '#00225E');
+                }
+            } catch (e) {
+                console.error("Error saving high score: ", e);
+            }
+        }
+
+        async function loadHighScore() {
+            if (!db || !userId) return;
+            const docPath = `/artifacts/${appId}/users/${userId}/${SCORE_COLLECTION}/highScore`;
+            try {
+                const docSnap = await getDoc(doc(db, docPath));
+                if (docSnap.exists()) {
+                    const highScore = docSnap.data().score;
+                    if (highScore > 0) {
+                        displayMessage(`Your Best: ${highScore} points`, '#A50024');
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading high score: ", e);
+            }
+        }
+        
+        // Run auth setup
+        if (Object.keys(firebaseConfig).length > 0) {
+            initAuth();
+        } else {
+            isAuthReady = true;
+            userId = 'local-user';
+        }
+
+
+        // --- Game Constants and Setup ---
+        const GAME_STATE = { 
+            READY: 0, 
+            WAITING_FOR_ANGLE: 1, // CHANGED ORDER
+            WAITING_FOR_POWER: 2, // CHANGED ORDER
+            SHOT_IN_AIR: 3, 
+            GAME_OVER: 4 
+        };
+        let currentState = GAME_STATE.READY;
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const shootButton = document.getElementById('shootButton');
+        const resetButton = document.getElementById('resetButton');
+        const selectionStatus = document.getElementById('selectionStatus');
+        const powerBar = document.getElementById('powerBar');
+        const angleBar = document.getElementById('angleBar');
+        const currentPowerDisplay = document.getElementById('currentPowerDisplay');
+        const currentAngleDisplay = document.getElementById('currentAngleDisplay');
+        const powerControls = document.getElementById('powerControls');
+        const angleControls = document.getElementById('angleControls');
+
+
+        // Game State
+        let game = {
+            score: 0,
+            timeRemaining: 60,
+            timerInterval: null,
+            // Canvas scaling factor (1 unit = 1 meter in game world)
+            scale: 1, 
+            canvasWidth: 0,
+            canvasHeight: 0,
+            powerInterval: null,
+            angleInterval: null,
+            barValue: 0, // 0 to 100
+        };
+        
+        // --- Input State for Dragging (Now unused) ---
+        let isAiming = false;
+        let aimStartX = 0;
+        let aimStartY = 0;
+        
+        // --- Comic Bubble State ---
+        let comicBubble = {
+            visible: false,
+            text: "Not in my house!",
+            timer: 0,
+            duration: 1.5, // seconds
+        }
+        
+        // --- Shockwave State ---
+        let shockwave = {
+            visible: false,
+            x: 0,
+            y: 0,
+            radius: 0,
+            opacity: 1,
+            maxRadius: 10,
+        };
+
+
+        // Image loading for the crowd
+        const crowdImage = new Image();
+        // Using a reliable placeholder URL 
+        crowdImage.src = "https://placehold.co/1000x700/00225E/A50024?text=Cheering+BYU+Crowd"; 
+        let crowdImageLoaded = false;
+        
+        // Physics Constants (MKS units)
+        const GRAVITY = 15.0; // Increased gravity for faster fall
+        const COURT_LENGTH_M = 15; 
+        
+        // HOOP CONSTANTS: Increased RIM size by 50%
+        const HOOP_SIZE_MULTIPLIER = 1.50; // 50% larger hoop/rim
+        const HOOP_HEIGHT_M = 3.05;       // Standard 10 feet height, UNCHANGED
+        const BASE_RIM_SIZE = 0.3;
+        const BASE_BACKBOARD_HEIGHT = 1.5;
+        const BASE_BACKBOARD_WIDTH = 0.1;
+        
+        const HOOP_X_M = COURT_LENGTH_M - 2;
+        const PLAYER_X_M = 3;
+        const PLAYER_HEIGHT_M = 1.8;
+        const BALL_RADIUS_M = 0.24 / 2; 
+
+        // Blocker Constants
+        // Blocker at 7.5m
+        const BLOCKER_X_M = PLAYER_X_M + 4.5; 
+        // Increased jump range to 2.5 meters for higher jump
+        const BLOCKER_JUMP_RANGE_M = 2.5; 
+        const BLOCKER_SPEED = 2; // meters per second jump speed
+        const BLOCKER_HEIGHT_M = 1.8; // Blocker height in meters
+        
+        // Blocker State
+        let blocker = {
+            y: 0, // Base Y position (on the floor)
+            vy: BLOCKER_SPEED, // Initial vertical velocity
+            direction: 1, // 1 for up, -1 for down
+            height: BLOCKER_HEIGHT_M, 
+        };
+
+        // Shot configuration (derived from bar values)
+        let shotAngleDeg = 45; 
+        let shotPower = 13; // Default value used for arrow length when first starting
+
+        // Physics scaling range (mapping 0-100 bar to game values)
+        const POWER_MIN = 8;
+        const POWER_MAX = 20;
+        // ANGLE RANGE: 15 to 70 degrees
+        const ANGLE_MIN = 15; 
+        const ANGLE_MAX = 70;
+
+        // Ball state
+        let ball = {
+            x: PLAYER_X_M,
+            y: PLAYER_HEIGHT_M,
+            vx: 0,
+            vy: 0,
+            radius: BALL_RADIUS_M,
+            isShot: false,
+            inAir: false,
+            isScored: false, // Flag to prevent scoring twice per shot
+            isSinking: false, // NEW: Flag to track if the ball has cleared the front rim plane
+            wasBlocked: false, // NEW: Flag to track if the shot was blocked
+        };
+
+        
+        // --- CONVERSION FUNCTIONS (MOVED TO TOP TO FIX SCOPE ERROR) ---
+        function toPixelX(meters) { return meters * game.scale; }
+        function toPixelY(meters) { return game.canvasHeight - (meters * game.scale); }
+        
+        // Maps 0-100 to a custom range (min to max)
+        function scaleBarValue(barValue, min, max) {
+            return min + (barValue / 100) * (max - min);
+        }
+        
+        // --- HELPER FUNCTION (MOVED TO FIX SCOPE ERROR) ---
+        function displayMessage(text, color = '#333') {
+            const msgEl = document.createElement('div');
+            msgEl.className = `absolute text-center text-2xl font-black fade-in-out`;
+            msgEl.style.color = color;
+            msgEl.textContent = text;
+            gameStatus.innerHTML = '';
+            gameStatus.appendChild(msgEl);
+
+            setTimeout(() => {
+                if (gameStatus.contains(msgEl)) {
+                    gameStatus.removeChild(msgEl);
+                }
+            }, 1500);
+        }
+
+
+        // --- DRAWING FUNCTIONS ---
+        
+        function drawSpeechBubble(text, xM, yM) {
+            const pxX = toPixelX(xM);
+            const pxY = toPixelY(yM);
+            const rectWidth = toPixelX(3.5);
+            const rectHeight = toPixelX(1.5);
+            const pointerSize = toPixelX(0.5);
+
+            ctx.save();
+            ctx.fillStyle = 'white';
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 3;
+            
+            // 1. Draw the rounded rectangle
+            ctx.beginPath();
+            const radius = 10;
+            
+            // Start shape from top left corner
+            ctx.moveTo(pxX + radius, pxY); 
+            ctx.lineTo(pxX + rectWidth - radius, pxY);
+            ctx.arcTo(pxX + rectWidth, pxY, pxX + rectWidth, pxY + radius, radius); 
+
+            // Draw right side, incorporating the pointer (tail goes right/down)
+            
+            // Calculate vertical center of the pointer (relative to bubble top edge pxY)
+            const pointerYCenter = pxY + rectHeight * 0.7; 
+            
+            // Pointer base 1 (on the right edge)
+            ctx.lineTo(pxX + rectWidth, pointerYCenter - pointerSize / 2);
+            
+            // Pointer tip (pointing right towards the blocker's head)
+            ctx.lineTo(pxX + rectWidth + pointerSize * 1.5, pointerYCenter); 
+            
+            // Pointer base 2 (on the right edge)
+            ctx.lineTo(pxX + rectWidth, pointerYCenter + pointerSize / 2); 
+            
+            // Finish right side, bottom, and left side
+            ctx.lineTo(pxX + rectWidth, pxY + rectHeight - radius);
+            ctx.arcTo(pxX + rectWidth, pxY + rectHeight, pxX + rectWidth - radius, pxY + rectHeight, radius);
+            ctx.lineTo(pxX + radius, pxY + rectHeight);
+            ctx.arcTo(pxX, pxY + rectHeight, pxX, pxY + rectHeight - radius, radius);
+            ctx.lineTo(pxX, pxY + radius);
+            ctx.arcTo(pxX, pxY, pxX + radius, pxY, radius);
+            
+            ctx.closePath();
+            
+            ctx.fill();
+            ctx.stroke();
+
+            // 3. Draw the text
+            ctx.fillStyle = 'black';
+            ctx.font = 'bold ' + toPixelX(0.3) + 'px Inter'; // Reverting font style
+            ctx.textAlign = 'center';
+            ctx.fillText(text, pxX + rectWidth / 2, pxY + rectHeight / 2 + toPixelX(0.1));
+
+            ctx.restore();
+        }
+        
+        function drawShockwave() {
+            if (!shockwave.visible) return;
+
+            ctx.save();
+            ctx.strokeStyle = `rgba(165, 0, 36, ${shockwave.opacity})`; // BYU Red fading out
+            ctx.lineWidth = toPixelX(0.3 * shockwave.opacity);
+            ctx.setLineDash([toPixelX(0.1 * shockwave.opacity), toPixelX(0.5)]);
+            
+            ctx.beginPath();
+            // X is the ball's last known X, Y is the floor line (ball.radius)
+            ctx.arc(toPixelX(shockwave.x), toPixelY(BALL_RADIUS_M), toPixelX(shockwave.radius), 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+
+        function drawCrowd() {
+            if (crowdImageLoaded) {
+                 // Draw the loaded image across the top portion of the canvas
+                 const imgHeight = game.canvasHeight * 0.7; // Cover top 70% of the canvas height
+                 ctx.drawImage(crowdImage, 0, 0, game.canvasWidth, imgHeight);
+            } else {
+                 // Fallback: draw dark background if image hasn't loaded yet
+                 ctx.fillStyle = '#6B7280';
+                 ctx.fillRect(0, 0, game.canvasWidth, game.canvasHeight);
+            }
+        }
+
+        function drawHoop() {
+            const hoopY = HOOP_HEIGHT_M;
+            const hoopX = HOOP_X_M;
+            // Use scaled rim size, but base backboard dimensions
+            const RIM_SIZE = BASE_RIM_SIZE * HOOP_SIZE_MULTIPLIER;
+            const BACKBOARD_HEIGHT = BASE_BACKBOARD_HEIGHT;
+            const BACKBOARD_WIDTH = BASE_BACKBOARD_WIDTH;
+
+            const backboardOffset = 0.1;
+            const backboardMountX = hoopX + RIM_SIZE + backboardOffset;
+
+            // 1. Pole (Grey steel)
+            ctx.fillStyle = '#6B7280'; 
+            ctx.fillRect(
+                toPixelX(backboardMountX - 0.05), // Thin pole
+                toPixelY(hoopY + BACKBOARD_HEIGHT), // Top of backboard
+                toPixelX(0.1), 
+                toPixelY(0) - toPixelY(hoopY + BACKBOARD_HEIGHT) // Extends to floor (y=0)
+            );
+
+
+            // 2. Backboard (White)
+            ctx.fillStyle = '#ffffff'; 
+            ctx.fillRect(
+                toPixelX(hoopX) + toPixelX(RIM_SIZE), 
+                toPixelY(hoopY + BACKBOARD_HEIGHT), 
+                toPixelX(BACKBOARD_WIDTH), 
+                toPixelY(hoopY) - toPixelY(hoopY + BACKBOARD_HEIGHT)
+            );
+            
+            // 3. Rim (Top line of the cylinder/target area) - BYU Red
+            ctx.strokeStyle = '#A50024'; 
+            ctx.lineWidth = toPixelX(0.08 * HOOP_SIZE_MULTIPLIER); 
+            ctx.beginPath();
+            ctx.moveTo(toPixelX(hoopX), toPixelY(hoopY));
+            ctx.lineTo(toPixelX(hoopX) + toPixelX(RIM_SIZE), toPixelY(hoopY));
+            ctx.stroke();
+
+            // 4. Net (Simple dangling lines)
+            ctx.strokeStyle = '#f0f0f0';
+            ctx.lineWidth = toPixelX(0.02); 
+            const netStart = toPixelY(hoopY - 0.1);
+            const netEnd = toPixelY(hoopY - 0.5);
+            for(let i = 0; i < 5; i++) {
+                ctx.beginPath();
+                const netX = toPixelX(hoopX) + toPixelX(0.05 * HOOP_SIZE_MULTIPLIER) + i * toPixelX(0.05 * HOOP_SIZE_MULTIPLIER);
+                ctx.moveTo(netX, netStart);
+                ctx.lineTo(netX + (i % 2 === 0 ? toPixelX(0.1) : -toPixelX(0.1)), netEnd);
+                ctx.stroke();
+            }
+        }
+        
+        function drawBlocker() {
+            const blockerX = BLOCKER_X_M;
+            const blockerY = blocker.y; // Dynamic Y position
+            const bodyHeight = 1.0;
+            const headRadius = 0.2;
+            const armLength = 0.6;
+            
+            // 1. Legs/Feet (Black)
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(toPixelX(blockerX - 0.3), toPixelY(blockerY + 0.5), toPixelX(0.6), toPixelX(0.5));
+
+            // 2. Body (Red Jersey - BYU Accent Color)
+            ctx.fillStyle = '#A50024'; 
+            ctx.fillRect(toPixelX(blockerX - 0.3), toPixelY(blockerY + bodyHeight), toPixelX(0.6), toPixelX(bodyHeight + 0.2));
+            
+            // 3. Head (Skin tone)
+            ctx.fillStyle = '#fceac9';
+            ctx.beginPath();
+            ctx.arc(toPixelX(blockerX), toPixelY(blockerY + bodyHeight + headRadius + 0.2), toPixelX(headRadius), 0, Math.PI * 2);
+            ctx.fill();
+
+            // 4. Arms (raised for blocking)
+            ctx.strokeStyle = '#fceac9'; 
+            ctx.lineWidth = toPixelX(0.15);
+            ctx.lineCap = 'round';
+            
+            // Arm 1 (Up and vertical)
+            ctx.beginPath();
+            ctx.moveTo(toPixelX(blockerX - 0.2), toPixelY(blockerY + bodyHeight + headRadius + 0.1));
+            ctx.lineTo(toPixelX(blockerX - 0.2), toPixelY(blockerY + bodyHeight + headRadius + 0.1 + armLength));
+            ctx.stroke();
+
+            // Arm 2 (Up and vertical)
+            ctx.beginPath();
+            ctx.moveTo(toPixelX(blockerX + 0.2), toPixelY(blockerY + bodyHeight + headRadius + 0.1));
+            ctx.lineTo(toPixelX(blockerX + 0.2), toPixelY(blockerY + bodyHeight + headRadius + 0.1 + armLength));
+            ctx.stroke();
+        }
+
+        function drawPlayer(angleDeg) {
+            const playerX = PLAYER_X_M;
+            const playerY = 0; 
+            const headY = playerY + PLAYER_HEIGHT_M + 0.2;
+            const torsoY = playerY + PLAYER_HEIGHT_M - 0.2;
+            
+            // 1. Legs (Brown/Skin tone)
+            const legColor = '#7d614a';
+            const legWidth = 0.2;
+            const legHeight = 0.8; 
+
+            ctx.fillStyle = legColor;
+            // Left leg
+            ctx.fillRect(toPixelX(playerX - legWidth), toPixelY(playerY + legHeight), toPixelX(legWidth), toPixelX(legHeight));
+            // Right leg
+            ctx.fillRect(toPixelX(playerX), toPixelY(playerY + legHeight), toPixelX(legWidth), toPixelX(legHeight));
+
+
+            // 2. Body (simple block - BYU Blue Jersey)
+            ctx.fillStyle = '#00225E'; 
+            ctx.fillRect(toPixelX(playerX - 0.3), toPixelY(torsoY), toPixelX(0.6), toPixelX(1));
+            
+            // 3. Head (White/Skin tone)
+            ctx.fillStyle = '#fceac9';
+            ctx.beginPath();
+            ctx.arc(toPixelX(playerX), toPixelY(headY), toPixelX(0.2), 0, Math.PI * 2);
+            ctx.fill();
+
+            // 4. Arms/Shooting Trajectory (Adjust based on angle)
+            const armColor = '#fceac9'; // Skin tone
+            const angleRad = angleDeg * Math.PI / 180;
+            const armLength = 0.7; 
+            const shoulderX = toPixelX(playerX + 0.3);
+            const shoulderY = toPixelY(torsoY + toPixelX(0.3)); // Adjusted slightly lower for arm placement
+            
+            const elbowX = shoulderX + toPixelX(armLength * 0.5 * Math.cos(angleRad + Math.PI / 4));
+            const elbowY = shoulderY - toPixelX(armLength * 0.5 * Math.sin(angleRad + Math.PI / 4));
+
+            const handX = shoulderX + toPixelX(armLength * Math.cos(angleRad));
+            const handY = shoulderY - toPixelX(armLength * Math.sin(angleRad));
+
+            // Arms (Using skin color)
+            ctx.strokeStyle = armColor;
+            ctx.lineWidth = toPixelX(0.15);
+            ctx.lineCap = 'round';
+            
+            // Arm 1 (Shoulder to Elbow)
+            ctx.beginPath();
+            ctx.moveTo(shoulderX, shoulderY);
+            ctx.lineTo(elbowX, elbowY);
+            ctx.stroke();
+
+            // Arm 2 (Elbow to Hand)
+            ctx.beginPath();
+            ctx.moveTo(elbowX, elbowY);
+            ctx.lineTo(handX, handY);
+            ctx.stroke();
+
+            // Trajectory Arrow Origin (always from the hand/ball position)
+            const arrowOriginX = playerX + armLength * Math.cos(angleRad);
+            const arrowOriginY = playerY + PLAYER_HEIGHT_M - 0.4 + armLength * Math.sin(angleRad);
+
+            // Draw Trajectory Arrow (Dashed line)
+            if (currentState === GAME_STATE.WAITING_FOR_ANGLE || currentState === GAME_STATE.WAITING_FOR_POWER) {
+                 ctx.save();
+                 ctx.strokeStyle = '#000000'; // Black dashed line
+                 ctx.setLineDash([5, 5]); // Dashes and gaps are 5 pixels
+                 ctx.lineWidth = 2;
+                 
+                 // Arrow Length: Use current shotPower scaled relative to the max power
+                 // Max visualization length (meters)
+                 const MAX_ARROW_VIS_LENGTH = 3.0; 
+                 // Calculate current length based on power selection
+                 const powerRatio = (shotPower - POWER_MIN) / (POWER_MAX - POWER_MIN);
+                 const currentArrowLengthM = MAX_ARROW_VIS_LENGTH * Math.max(0.1, powerRatio); // Ensure minimum length
+                 
+                 const arrowEndX = arrowOriginX + currentArrowLengthM * Math.cos(angleRad);
+                 const arrowEndY = arrowOriginY + currentArrowLengthM * Math.sin(angleRad);
+                 
+                 ctx.beginPath();
+                 ctx.moveTo(toPixelX(arrowOriginX), toPixelY(arrowOriginY));
+                 ctx.lineTo(toPixelX(arrowEndX), toPixelY(arrowEndY));
+                 ctx.stroke();
+                 
+                 // Draw Arrowhead (Simple V shape)
+                 ctx.setLineDash([]); // Reset dashed line
+                 ctx.fillStyle = '#000000';
+                 ctx.translate(toPixelX(arrowEndX), toPixelY(arrowEndY));
+                 ctx.rotate(-angleRad); // Rotate to align with the trajectory
+                 ctx.beginPath();
+                 ctx.moveTo(0, 0);
+                 ctx.lineTo(-10, 5); // 10px back, 5px side
+                 ctx.lineTo(-10, -5); // 10px back, -5px side
+                 ctx.fill();
+                 ctx.restore();
+            }
+
+
+            // Reset ball position to the hand if not shot
+            if (!ball.inAir) {
+                ball.x = arrowOriginX;
+                ball.y = arrowOriginY;
+            }
+        }
+
+        function drawBall(xM, yM) {
+            ctx.fillStyle = 'orange';
+            ctx.beginPath();
+            ctx.arc(toPixelX(xM), toPixelY(yM), toPixelX(ball.radius), 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = toPixelX(0.01);
+            ctx.beginPath();
+            ctx.moveTo(toPixelX(xM), toPixelY(yM - ball.radius));
+            ctx.lineTo(toPixelX(xM), toPixelY(yM + ball.radius));
+            ctx.stroke();
+        }
+        
+        function drawGameOverScreen() {
+            ctx.fillStyle = 'rgba(0, 34, 94, 0.7)';
+            ctx.fillRect(0, 0, game.canvasWidth, game.canvasHeight);
+
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+
+            ctx.font = 'bold ' + toPixelX(0.8) + 'px Inter';
+            ctx.fillText('Game Over!', game.canvasWidth / 2, game.canvasHeight / 2 - toPixelX(0.5));
+
+            ctx.font = 'bold ' + toPixelX(0.5) + 'px Inter';
+            ctx.fillText('Final Score: ' + game.score, game.canvasWidth / 2, game.canvasHeight / 2 + toPixelX(0.2));
+            
+            shootButton.classList.add('hidden');
+            resetButton.classList.remove('hidden');
+        }
+
+        function drawGame() {
+            if (game.canvasWidth === 0 || game.canvasHeight === 0) return;
+
+            // 1. Clear Canvas (Court / Sky)
+            ctx.fillStyle = '#e0e0e0';
+            ctx.fillRect(0, 0, game.canvasWidth, game.canvasHeight);
+
+            // 2. Draw Crowd Image
+            drawCrowd(); 
+            
+            // 3. Draw floor line (free throw line area color)
+            const floorHeight = 0.5;
+            ctx.fillStyle = '#00225E';
+            ctx.fillRect(0, toPixelY(floorHeight), game.canvasWidth, toPixelY(0) - toPixelY(floorHeight));
+
+            // 4. Draw Hoop and Blocker (Must be drawn over the crowd background)
+            drawHoop();
+            drawBlocker();
+            drawPlayer(shotAngleDeg);
+            
+            // 5. Draw Ball
+            if (ball.inAir || !ball.isShot) {
+                drawBall(ball.x, ball.y);
+            }
+
+            // 5b. Draw Shockwave (Always drawn before text, but after the ball)
+            drawShockwave();
+            
+            // 6. Draw speech bubble if visible
+            if (comicBubble.visible) {
+                // The blocker's head (the source of the speech) is at blocker.y + BLOCKER_HEIGHT_M + 0.2
+                const blockerHeadY_M = blocker.y + BLOCKER_HEIGHT_M + 0.2;
+                const bubbleWidthM = 3.5;
+                
+                // Position the bubble to the LEFT of the blocker, anchored 1.0m away from the center line.
+                const bubbleX = BLOCKER_X_M - bubbleWidthM - 1.0; 
+                
+                // Y position of the TOP edge of the bubble (Higher offset)
+                // Offset the bubble top edge higher by 1.0 meter (lower Y coordinate)
+                const Y_OFFSET_M_ADJUSTED = 1.0; 
+                const bubbleY = blockerHeadY_M + Y_OFFSET_M_ADJUSTED; 
+                
+                // Draw bubble, passing the bubble's calculated position
+                drawSpeechBubble(comicBubble.text, bubbleX, bubbleY);
+            }
+
+            // 7. Draw Game Over screen
+            if (currentState === GAME_STATE.GAME_OVER) {
+                drawGameOverScreen();
+            }
+        }
+        
+        // --- RESIZE CANVAS (Must be defined before its first call in initGameFlow) ---
+
+        function resizeCanvas() {
+            game.canvasWidth = canvas.clientWidth;
+            if (game.canvasWidth === 0) { game.canvasWidth = 600; }
+            game.canvasHeight = game.canvasWidth * 0.75; 
+            canvas.width = game.canvasWidth;
+            canvas.height = game.canvasHeight;
+            game.scale = game.canvasWidth / COURT_LENGTH_M; 
+            drawGame();
+        }
+        
+        // --- GAME LOGIC FUNCTIONS ---
+
+
+        const resetShot = () => {
+            currentState = GAME_STATE.READY;
+            ball.inAir = false;
+            ball.isShot = false;
+            ball.isScored = false; // Reset scoring flag
+            ball.isSinking = false; // NEW: Reset sinking flag
+            ball.wasBlocked = false; // NEW: Reset blocked flag
+            
+            // Clear bar state
+            if (powerBar) powerBar.style.width = `0%`; 
+            if (angleBar) angleBar.style.width = `0%`;
+            
+            // Reset shotPower/shotAngleDeg to default visualization state
+            shotPower = POWER_MIN + (0.5 * (POWER_MAX - POWER_MIN)); // Middle power (Used by arrow drawing)
+            shotAngleDeg = ANGLE_MIN + (0.5 * (ANGLE_MAX - ANGLE_MIN)); // Middle angle (Used by arrow drawing)
+
+            if (currentPowerDisplay) currentPowerDisplay.textContent = '--';
+            if (currentAngleDisplay) currentAngleDisplay.textContent = '--';
+
+            // Reset controls UI for start
+            if (shootButton) {
+                shootButton.disabled = false;
+                shootButton.textContent = 'Start Shot';
+            }
+            
+            // Initial state: Angle control visible, Power control hidden/disabled.
+            if (powerControls) powerControls.classList.add('opacity-50', 'pointer-events-none');
+            if (angleControls) angleControls.classList.remove('opacity-50', 'pointer-events-none');
+            
+            if (selectionStatus) selectionStatus.textContent = "Click \"Start Shot\" to begin.";
+            
+            // Disable canvas drag input (Reverting to bar)
+            // canvas.style.cursor is controlled by mouseup/down for the whole window.
+            canvas.style.cursor = 'default';
+        }
+
+        const gameOver = () => {
+            currentState = GAME_STATE.GAME_OVER;
+            if (game.powerInterval) clearInterval(game.powerInterval);
+            if (game.angleInterval) clearInterval(game.angleInterval);
+            if (isAuthReady && game.score > 0) {
+                saveHighScore(game.score);
+            }
+            canvas.style.cursor = 'default';
+            drawGame();
+        }
+
+        const updateTimer = () => {
+            if (game.timeRemaining > 0) {
+                game.timeRemaining--;
+                timerDisplay.textContent = `${game.timeRemaining}s`;
+            } else {
+                clearInterval(game.timerInterval);
+                gameOver();
+            }
+        }
+        
+        // The function that restarts the entire game (score and timer reset)
+        const startGame = () => {
+            if (game.timerInterval) clearInterval(game.timerInterval);
+            currentState = GAME_STATE.READY;
+            game.score = 0;
+            game.timeRemaining = 60;
+            scoreDisplay.textContent = game.score;
+            selectionStatus.textContent = "Click \"Start Shot\" to begin.";
+            
+            // Use local definitions here
+            resetShot();
+            
+            shootButton.classList.remove('hidden');
+            resetButton.classList.add('hidden');
+            
+            game.timerInterval = setInterval(updateTimer, 1000);
+            requestAnimationFrame(animate); 
+        }
+
+        // --- Drag-to-Aim Handlers (Removed logic, kept stub to prevent errors if click persists) ---
+
+        // These handlers are now unused as we revert to bar control.
+        function handlePointerDown(e) { /* STUB */ }
+        function handlePointerMove(e) { /* STUB */ }
+        function handlePointerUp() { /* STUB */ }
+
+        // --- Game Flow Functions ---
+
+        function handleShotAction() {
+            console.log("Button Clicked. Current State:", currentState);
+            if (currentState === GAME_STATE.READY) {
+                startAngleSelection(); // 1. Starts angle timing
+            } else if (currentState === GAME_STATE.WAITING_FOR_ANGLE) {
+                stopAngleSelection(); // 2. Locks angle, moves to power timing
+            } else if (currentState === GAME_STATE.WAITING_FOR_POWER) {
+                stopPowerSelection(); // 3. Locks power, shoots
+            }
+        }
+
+        // --- Angle Selection (BAR TIMED - REINSTATED) ---
+        function startAngleSelection() {
+            currentState = GAME_STATE.WAITING_FOR_ANGLE;
+            selectionStatus.textContent = "Click to set TRAJECTORY!";
+            console.log("State: WAITING_FOR_ANGLE. Starting interval.");
+            
+            // Enable Angle, Disable Power
+            powerControls.classList.add('opacity-50', 'pointer-events-none');
+            angleControls.classList.remove('opacity-50', 'pointer-events-none');
+
+            shootButton.textContent = "Lock Trajectory";
+            game.barValue = 0;
+            let direction = 1; // 1 for right, -1 for left
+            const speed = 4; // Bar speed (higher is faster)
+
+            game.angleInterval = setInterval(() => {
+                game.barValue += direction * speed;
+
+                if (game.barValue >= 100) {
+                    game.barValue = 100;
+                    direction = -1;
+                } else if (game.barValue <= 0) {
+                    game.barValue = 0;
+                    direction = 1;
+                }
+
+                angleBar.style.width = `${game.barValue}%`;
+                const calculatedAngle = scaleBarValue(game.barValue, ANGLE_MIN, ANGLE_MAX);
+                
+                shotAngleDeg = calculatedAngle;
+                currentAngleDisplay.textContent = `${Math.round(calculatedAngle)}°`;
+                
+                drawGame(); 
+            }, 50);
+        }
+
+        function stopAngleSelection() {
+            clearInterval(game.angleInterval);
+            currentAngleDisplay.textContent = `${Math.round(shotAngleDeg)}°`;
+            console.log("Angle Selected:", shotAngleDeg);
+
+            // Move to Power selection
+            startPowerSelection();
+        }
+
+        // --- Power Selection (BAR TIMED - REINSTATED) ---
+        function startPowerSelection() {
+            currentState = GAME_STATE.WAITING_FOR_POWER;
+            selectionStatus.textContent = "Click to set POWER!";
+            console.log("State: WAITING_FOR_POWER. Starting interval.");
+            
+            // Disable canvas interaction (aiming)
+            canvas.style.cursor = 'default';
+
+            // Enable Power, Disable Angle controls display
+            powerControls.classList.remove('opacity-50', 'pointer-events-none');
+            angleControls.classList.add('opacity-50', 'pointer-events-none');
+
+            shootButton.textContent = "Select Power";
+            game.barValue = 0;
+            let direction = 1; // 1 for right, -1 for left
+            const speed = 4; // Bar speed (higher is faster)
+
+            game.powerInterval = setInterval(() => {
+                game.barValue += direction * speed;
+
+                if (game.barValue >= 100) {
+                    game.barValue = 100;
+                    direction = -1;
+                } else if (game.barValue <= 0) {
+                    game.barValue = 0;
+                    direction = 1;
+                }
+
+                powerBar.style.width = `${game.barValue}%`; 
+                
+                // Update shotPower state continuously for arrow length visualization
+                shotPower = scaleBarValue(game.barValue, POWER_MIN, POWER_MAX);
+                currentPowerDisplay.textContent = Math.round(shotPower * 10) / 10;
+                
+                drawGame(); 
+            }, 50); // 50ms interval for smooth animation
+        }
+        
+        function stopPowerSelection() {
+            clearInterval(game.powerInterval);
+            
+            // Calculate final power value (already updated in interval, but finalize display)
+            currentPowerDisplay.textContent = Math.round(shotPower * 10) / 10;
+            console.log("Power Selected:", shotPower);
+            
+            // Move to shooting
+            handleShoot();
+        }
+
+        // --- Shot Execution and Physics (Unchanged) ---
+
+        function handleShoot() {
+            currentState = GAME_STATE.SHOT_IN_AIR;
+            selectionStatus.textContent = `Shooting with Power: ${Math.round(shotPower * 10) / 10} and Angle: ${Math.round(shotAngleDeg)}°`;
+            console.log("State: SHOT_IN_AIR. Shooting.");
+            
+            // Disable button and controls during shot
+            shootButton.disabled = true;
+            shootButton.textContent = 'In Air...';
+            powerControls.classList.add('opacity-50', 'pointer-events-none');
+            angleControls.classList.add('opacity-50', 'pointer-events-none');
+
+
+            // Calculate initial velocities
+            const angleRad = shotAngleDeg * Math.PI / 180;
+            ball.vx = shotPower * Math.cos(angleRad);
+            ball.vy = shotPower * Math.sin(angleRad);
+
+            ball.inAir = true;
+            ball.isShot = true;
+
+            // Set the ball's starting position (from the hand, based on final angle)
+            const playerX = PLAYER_X_M;
+            const playerY = PLAYER_HEIGHT_M - 0.4;
+            const armLength = 0.7; 
+            ball.x = playerX + armLength * Math.cos(angleRad);
+            ball.y = playerY + PLAYER_HEIGHT_M - 0.4 + armLength * Math.sin(angleRad);
+        }
+
+        let lastTime = 0;
+        const MS_PER_SEC = 1000;
+
+        function animate(timestamp) {
+            const dt = (timestamp - lastTime) / MS_PER_SEC; 
+            lastTime = timestamp;
+            
+            if (currentState === GAME_STATE.GAME_OVER) return;
+
+            // Shockwave update
+            if (shockwave.visible) {
+                 shockwave.radius += dt * 10; // Expand rapidly
+                 shockwave.opacity -= dt * 1.5; // Fade rapidly
+                 if (shockwave.opacity <= 0) {
+                     shockwave.visible = false;
+                 }
+            }
+
+
+            if (currentState === GAME_STATE.SHOT_IN_AIR) {
+                updatePhysics(dt);
+                // Update bubble timer if visible
+                if (comicBubble.visible) {
+                    comicBubble.timer += dt;
+                    if (comicBubble.timer >= comicBubble.duration) {
+                        comicBubble.visible = false;
+                        comicBubble.timer = 0;
+                    }
+                }
+            } else {
+                // If not shooting, still update the blocker animation
+                updateBlockerMovement(dt); 
+            }
+            drawGame();
+
+            requestAnimationFrame(animate);
+        }
+        
+        function updateBlockerMovement(dt) {
+             // Blocker movement is independent of the ball shot status
+             blocker.y += blocker.vy * dt * blocker.direction;
+
+             if (blocker.y >= BLOCKER_JUMP_RANGE_M) {
+                 blocker.y = BLOCKER_JUMP_RANGE_M;
+                 blocker.direction = -1; // Move down
+             } else if (blocker.y <= 0) {
+                 blocker.y = 0;
+                 blocker.direction = 1; // Move up
+             }
+        }
+
+
+        function updatePhysics(dt) {
+            if (!ball.inAir) return;
+
+            // Update Blocker movement regardless of shot in air state
+            updateBlockerMovement(dt); 
+
+            ball.vy -= GRAVITY * dt;
+            ball.x += ball.vx * dt;
+            ball.y += ball.vy * dt;
+            
+            
+            // --- Blocker Collision Check ---
+            const BLOCKED_HEIGHT_M = blocker.y + BLOCKER_HEIGHT_M + 0.1; // Blocker head + arms height, plus margin
+            
+            if (ball.inAir && ball.isShot && !ball.isScored && 
+                ball.x > BLOCKER_X_M - 0.4 && ball.x < BLOCKER_X_M + 0.4 && // Horizontal range
+                ball.y < BLOCKED_HEIGHT_M && ball.y > blocker.y) { // Vertical range close to the blocker's top
+                
+                // If the ball is moving towards the hoop and hits the blocker at the right height
+                if (ball.vx > 0) {
+                    // Block detected!
+                    // Bounce with a lot of force
+                    ball.vx = -10; // Extreme horizontal rebound (left)
+                    ball.vy = -15; // Extreme downward spike (negative Y is down)
+                    
+                    // Activate the comic book bubble
+                    comicBubble.visible = true;
+                    comicBubble.timer = 0;
+                    
+                    // Set wasBlocked flag for shockwave trigger
+                    ball.wasBlocked = true; 
+
+                    return; // Stop physics processing for this frame after collision
+                }
+            }
+
+
+            // 1. Check for floor collision
+            if (ball.y <= ball.radius) {
+                
+                // Trigger shockwave effect ONLY IF BLOCKED AND NOT ALREADY VISIBLE
+                if (ball.wasBlocked && !shockwave.visible) {
+                    shockwave.visible = true;
+                    shockwave.x = ball.x;
+                    shockwave.radius = BALL_RADIUS_M;
+                    shockwave.opacity = 1;
+                    ball.wasBlocked = false; // Reset flag after first bounce trigger
+                }
+
+                ball.y = ball.radius;
+                ball.vy *= -0.5; 
+                ball.vx *= 0.9;
+
+                if (Math.abs(ball.vy) < 1 && Math.abs(ball.vx) < 1) {
+                    ball.inAir = false;
+                    setTimeout(resetShot, 1000); 
+                }
+            }
+            
+            // 2. Check for out of bounds 
+            if (ball.x > COURT_LENGTH_M + 1 || ball.x < -1 || ball.y < -1) { // Added left and bottom boundary checks
+                 ball.inAir = false;
+                 setTimeout(resetShot, 500); 
+                 return;
+            }
+
+            // 3. Check for successful hoop collision/score 
+            const hoopY = HOOP_HEIGHT_M;
+            const RIM_SIZE = BASE_RIM_SIZE * HOOP_SIZE_MULTIPLIER;
+            const hoopX = HOOP_X_M + ball.radius; 
+            const hoopWidth = RIM_SIZE - 2 * ball.radius; 
+            const hoopBottom = hoopY - 0.5; // Net height is absolute
+            
+            const ballXCenter = ball.x;
+            const ballYCenter = ball.y;
+
+            const isHorizontallyAligned = ballXCenter >= hoopX && ballXCenter <= hoopX + hoopWidth;
+
+            // --- SINKING STATE CHECK ---
+            const RIM_FRONT = HOOP_X_M;
+            const RIM_BACK = HOOP_X_M + RIM_SIZE;
+            
+            // If the center of the ball crosses the front of the rim, it's sinking (disable most bounce checks)
+            if (ballXCenter > RIM_FRONT + BALL_RADIUS_M) {
+                ball.isSinking = true;
+            }
+
+
+            // --- RIM COLLISION (BOUNCE) - ONLY ACTIVE IF NOT SINKING ---
+            const RIM_TOP = hoopY;
+            const RIM_TOLERANCE = 0.05; // Tighten horizontal tolerance for collision
+            
+            if (!ball.isSinking && !ball.isScored) {
+                
+                // Check if ball is touching the vertical plane of the rim (front collision)
+                if (ballXCenter + ball.radius >= RIM_FRONT && ballXCenter - ball.radius < RIM_FRONT + RIM_TOLERANCE &&
+                    ballYCenter < RIM_TOP + ball.radius && ballYCenter > RIM_TOP - 0.5) {
+                    
+                    if (ball.vx > 0) {
+                         ball.vx *= -0.8; // Strong horizontal rebound
+                         ball.vy *= 0.6;  // Reduced vertical rebound for softer rim hit
+                         return;
+                    }
+                }
+                
+                // Check if the ball hits the top horizontal plane of the rim (top collision)
+                if (ballYCenter - ball.radius < RIM_TOP && ballYCenter + ball.radius > RIM_TOP &&
+                    ballXCenter > RIM_FRONT && ballXCenter < RIM_BACK) {
+                    
+                    if (ball.vy < 0) {
+                        ball.vy *= -0.7; // Reduced bounce upward (softer)
+                        ball.vx *= 0.7; // Dampened horizontal speed
+                        return;
+                    }
+                }
+            }
+
+
+            // SCORING CHECK: If the ball passes through the scoring zone and hasn't scored yet.
+            if (!ball.isScored && isHorizontallyAligned && ballYCenter < hoopY && ballYCenter > hoopBottom) {
+                 if (ballYCenter - ball.radius < hoopY) {
+                    ball.isScored = true; // Mark as scored
+                    game.score += 2;
+                    scoreDisplay.textContent = game.score;
+                    displayMessage('SWISH! (+2)', 'green'); // Use generic message for score
+                    ball.inAir = false; // Stop motion once scored
+                    setTimeout(resetShot, 1000); 
+                 }
+            }
+            
+            // 4. Check for backboard/rim deflection (bounce fix)
+            // Define local backboard collision constants for clarity and error avoidance
+            const BACKBOARD_WIDTH_M = BASE_BACKBOARD_WIDTH;
+            const BACKBOARD_HEIGHT_M = BASE_BACKBOARD_HEIGHT; 
+
+            // Calculate backboard boundaries
+            const backboardX_Left = HOOP_X_M + RIM_SIZE; // Where rim ends
+            const backboardX_Right = backboardX_Left + BACKBOARD_WIDTH_M; 
+            const BACKBOARD_TOP_M = HOOP_HEIGHT_M + BACKBOARD_HEIGHT_M; 
+            
+            // Check collision with the front face of the backboard
+            // Collision is true if ball's right edge hits the backboard's left edge
+            if (ball.x + ball.radius >= backboardX_Left && ball.x - ball.radius < backboardX_Right && // Horizontal overlap
+                ballYCenter < BACKBOARD_TOP_M && ballYCenter > HOOP_HEIGHT_M) { // Vertical alignment (Backboard area)
+                
+                // We only bounce if the ball is moving towards the backboard (vx > 0)
+                if (ball.vx > 0) { 
+                    // Bounce Fix: Reverse X velocity strongly (0.7) and maintain vertical velocity (0.9)
+                    ball.vx *= -0.7; 
+                    ball.vy *= 0.9; 
+                    // Ensure the ball position is corrected so it's not embedded in the backboard
+                    ball.x = backboardX_Left - ball.radius; 
+                    // NO RETURN HERE. Continue to scoring check.
+                }
+            }
+        }
+
+        // --- Initialization and Event Wiring ---
+
+        function initGameFlow() {
+            crowdImage.onload = () => {
+                crowdImageLoaded = true;
+                resizeCanvas(); 
+                startGame();
+            };
+            crowdImage.onerror = () => {
+                crowdImageLoaded = true; // Still proceed even if load fails
+                resizeCanvas();
+                startGame();
+            };
+
+            // FIX: Removed canvas drag listeners since we reverted to bar timing
+            window.addEventListener('resize', resizeCanvas);
+            shootButton.addEventListener('click', handleShotAction);
+            resetButton.addEventListener('click', startGame);
+
+            // Manually trigger the image load flow in case onload already fired
+            if (crowdImage.complete && !crowdImageLoaded) {
+                 crowdImageLoaded = true;
+                 resizeCanvas();
+                 startGame();
+            }
+            
+            // Initial call
+            if (document.readyState === 'complete') {
+                if (!crowdImage.complete) {
+                   // Force image load check if page is already loaded but image hasn't finished
+                   crowdImage.src = crowdImage.src; 
+                } else {
+                   // Directly initialize if all assets are ready
+                   resizeCanvas();
+                   startGame();
+                }
+            }
+        }
+        
+        // Final function calls run after module load
+        initGameFlow();
+    </script>
+</body>
+</html>

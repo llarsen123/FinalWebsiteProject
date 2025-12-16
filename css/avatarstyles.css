@@ -1,0 +1,176 @@
+/* CSS STYLES */
+
+/* Importing two fonts: Merriweather (serif) for headings and Open Sans (sans-serif) for body text.
+   Note: The actual font linking is done in the index.html head section. */
+
+/* General Body Styling */
+body {
+    font-family: 'Open Sans', sans-serif;
+    line-height: 1.7;
+    margin: 0;
+    padding: 0;
+    background-color: lightblue; /* Very light, off-white background */
+    color: #333;
+}
+
+/* Main Content Container: Elevated and Structured */
+.container {
+    max-width: 900px; /* Slightly tighter width for better line length */
+    margin: 50px auto;
+    padding: 40px;
+    background-color: #ffffff;
+    border-radius: 10px;
+    /* More defined, multi-level shadow for depth */
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+/* Headings: Using a Serif Font for Authority/Character */
+h1, h2 {
+    font-family: 'Merriweather', serif;
+    text-align: center;
+    color: #1c2833; /* Near-black for impact */
+    position: relative;
+    padding-bottom: 15px;
+    margin-top: 40px;
+    font-style: italic;
+    
+}
+
+/* Custom Underline Style (less generic than a simple border) */
+h1::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80px;
+    height: 3px;
+    background-color: #0077b6; /* Thematic Blue */
+    border-radius: 2px;
+}
+
+h2::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 50px;
+    height: 2px;
+    background-color: #0096c7;
+    border-radius: 1px;
+}
+
+h1 {
+    font-size: 2.2em;
+    font-weight: 900;
+    letter-spacing: -0.5px;
+}
+
+h2 {
+    font-size: 1.6em;
+    font-weight: 700;
+}
+
+/* Paragraphs */
+p {
+    text-align: left; /* Using left-align (ragged-right) often looks more natural than justified */
+    margin-bottom: 25px;
+    font-size: 1.05em;
+    color: #4a4a4a;
+}
+
+/* YouTube Embed Styling */
+.video-container {
+    display: flex;
+    justify-content: center;
+    margin: 35px 0;
+}
+
+iframe {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* Lists (Key Elements) Styling: Using Thematic Colors */
+ol {
+    padding-left: 0;
+    list-style: none;
+    counter-reset: item; /* Initialize counter for custom numbering */
+}
+
+ol > li {
+    counter-increment: item;
+    font-weight: 600;
+    color: #1c2833;
+    margin-bottom: 20px;
+    font-size: 1.1em;
+    display: block;
+    padding-left: 40px;
+    position: relative;
+}
+
+/* Custom Numeric Marker for Main List */
+ol > li::before {
+    content: counter(item);
+    position: absolute;
+    left: 0;
+    top: -2px;
+    background-color: #0077b6; /* Water/Air Primary Accent */
+    color: #fff;
+    width: 28px;
+    height: 28px;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 50%;
+    font-weight: 900;
+    font-family: 'Merriweather', serif;
+    font-size: 0.8em;
+}
+
+/* Nested Unordered List Styling (Sub-points) */
+ul {
+    padding-left: 20px;
+    margin-top: 10px;
+    list-style: none;
+}
+
+.nations-list li:nth-child(1) { color: #0077b6; } /* Water */
+.nations-list li:nth-child(2) { color: #4e934a; } /* Earth */
+.nations-list li:nth-child(3) { color: #ff5a00; } /* Fire */
+.nations-list li:nth-child(4) { color: #a8dadc; } /* Air */
+
+ul li {
+    font-weight: 400;
+    margin-bottom: 5px;
+    position: relative;
+    padding-left: 15px;
+}
+
+ul li::before {
+    content: '•';
+    position: absolute;
+    left: 0;
+    font-size: 1.2em;
+    line-height: 1;
+}
+
+/* Tableau Embed Styles: Full width and margin control */
+.tableauPlaceholder {
+    text-align: center;
+    margin: 40px auto;
+    max-width: 100%;
+}
+
+img.centered-image {
+    display: block;
+    margin: 2rem auto;
+    width: 320px;      /* hard cap keeps it from blowing up */
+    max-width: 90%;    /* still responsive on mobile */
+    height: auto;
+    border-radius: 8px;
+}
+
